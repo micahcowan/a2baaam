@@ -9,8 +9,12 @@
 
 Baaam:
 BaaamHeader:
-    _BaaamHeader "&", (>BaaamEnd - >Baaam + 1), BaaamFixup, BaaamInit, BaaamEntry
+    _BaaamHeader AmpersandTag, (>BaaamEnd - >Baaam + 1), BaaamFixup, BaaamInit, BaaamEntry
     .include "baaam-version.inc"
+
+AmpersandTag:
+    .byte 1
+    scrcode "&"
 
 BaaamEot:
     .byte $0 ; current end of modules table
