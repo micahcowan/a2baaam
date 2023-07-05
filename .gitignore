@@ -1,0 +1,4 @@
+*.o
+*.lst
+baaam-version.inc
+baaam-version.inc.tmp
