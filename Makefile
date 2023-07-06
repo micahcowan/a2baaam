@@ -8,11 +8,28 @@ VERSION_MAJOR=1
 VERSION_MINOR=0
 VERSION_PATCHLEVEL=0
 
-BAAAM=prodos-build/BAAAM\#061FFD
+BAAAM_=BAAAM\#061FFD
+BAAAM=prodos-build/$(BAAAM_)
 OBJECTS=baaam.o empty-fixup.o prodos.o
 
 .PHONY: all
-all: $(BAAAM)
+all: BAAAM-PRODOS.po
+ifdef BUILDCOPY
+	cp $^ ~/dl/
+endif
+
+TMPPRODOS=BAAAM-PRODOS-TMP.po
+BAAAM-PRODOS.po: prodos_242.po $(BAAAM) baaam.tok2
+	cp prodos_242.po $(TMPPRODOS)
+	prodos $(TMPPRODOS) SAVE -t BIN -a 0x1FFD $(BAAAM) BAAAM.BIN
+	prodos $(TMPPRODOS) SAVE -t BAS baaam.tok2 BAAAM
+	mv $(TMPPRODOS) $@
+
+%.tok2: %.tok
+	dd bs=1 if=$< of=$@ skip=2
+
+%.tok: %.bas
+	tokenize_asoft < $< > $@ || { rm $@; exit 1; }
 
 $(BAAAM): baaam.o fixup.o prodos.o Makefile prodos-build
 	$(LD65) -C baaam.cfg -o $@ baaam.o fixup.o prodos.o
@@ -69,4 +86,5 @@ baaam-version.inc: Makefile
 clean:
 	rm -fr prodos-build
 	rm -f *.o *.lst baaam-version.inc baaam-version.inc.tmp \
-	    BAAAM\#* BAAAM.2000 BAAAM.3000 mkfixup fixup.s
+	    BAAAM\#* BAAAM.2000 BAAAM.3000 mkfixup fixup.s \
+	    BAAAM-PRODOS.po

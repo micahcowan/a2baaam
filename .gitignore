@@ -1,9 +1,12 @@
 *.o
 *.lst
+*.tok
+*.tok2
 fixup.s
 baaam-version.inc
 baaam-version.inc.tmp
 prodos-build
 BAAAM.2000
 BAAAM.3000
+BAAAM-PRODOS.po
 mkfixup
