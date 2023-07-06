@@ -1,4 +1,9 @@
 *.o
 *.lst
+fixup.s
 baaam-version.inc
 baaam-version.inc.tmp
+prodos-build
+BAAAM.2000
+BAAAM.3000
+mkfixup

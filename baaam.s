@@ -1,5 +1,5 @@
 .import BaaamFixup
-.import SystemStart, SystemClear, SystemAlloc
+.import SystemClear, SystemAlloc
 
 .macpack apple2
 
@@ -9,10 +9,15 @@
 
 StartPage = $6
 
+.segment "START"
+PreBaaam:
+    jmp BaaamRun
 Baaam:
 BaaamHeader:
     _BaaamHeader AmpersandTag, Baaam, BaaamEnd, BaaamFixup, BaaamInit, BaaamEntry
     .include "baaam-version.inc"
+
+.code
 AmpersandTag:
     .byte 1
     scrcode "&"
@@ -155,14 +160,32 @@ JumpTracks:
     clc
     adc StartPage
     sta Mon::STACK,x ; fix it
-    rts         ; ...and then rts to it
+    rts              ; ...and then rts to it
 
 BaaamInit:
-    ; Install the & handler routine
+    ; Install our & handler routine
+    lda #$4C ; JMP
+    ldx #<Ampersand
+    ldy #>Ampersand
+    sta ASoft::AMP
+    stx ASoft::AMP+1
+    sty ASoft::AMP+2
+    ; fall through
 BaaamEntry:
     rts
 
-BaaamInterface:
-    jmp RegisterModule
-    jmp BaaamRun
+Ampersand:
+    ldx #0
+@lo:
+    lda Message,x
+    beq @done
+    jsr Mon::COUT
+    inx
+    bne @lo
+@done:
+    rts
+Message:
+    scrcode "BANZAI!", $0D
+    .byte $0
+
 BaaamEnd:

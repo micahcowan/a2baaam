@@ -136,6 +136,7 @@ CHRGET  = $B1 ; zero page routine
 CHRGOT  = $B7 ; zero page routine
 
 AMP          = $03F5
+
 BLTU         = $D393
 REASON       = $D3E3
 MEMERR       = $D410
