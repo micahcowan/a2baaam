@@ -8,6 +8,7 @@
 .include "a2firm.inc"
 
 StartPage = $6
+StartDiff = $7
 
 .segment "START"
 PreBaaam:
@@ -53,6 +54,8 @@ RegisterModule:
     ; New start page is in acc, set it as copy destination
     sta ZP::A4H
     sta StartPage
+    sbc #(>BaaamModuleStart - 1) ; adjusted for clear carry/set borrow
+    sta StartDiff
     ; Set up copy source, too
     lda #>BaaamModuleStart
     sta ZP::A1H
@@ -65,7 +68,7 @@ RegisterModule:
     lda #$FF
     sta ZP::A2L
     ldy #0 ; set page starts, but also y must = 0 for Monitor commands.
-    sty ZP::A2L
+    sty ZP::A1L
     sty ZP::A4L
     jsr Mon::MOVE
     ; Do reference fix-ups
@@ -78,7 +81,7 @@ RegisterModule:
     lda #>BaaamModuleStart
     clc
     adc BaaamModuleFixup+1
-    sta @FixupPtr
+    sta @FixupPtr+1
     ; Now, walk the table and do the fixups
     ldy #0
 @NextFixup:
@@ -100,7 +103,7 @@ RegisterModule:
     adc StartPage ; holds the new page location
     sta @FixupTmp+1
     lda (@FixupTmp),y ; fetch original, moved, unfixed byte
-    adc StartPage       ; fix it
+    adc StartDiff     ; fix it
     sta (@FixupTmp),y ; and save
     bne @NextFixup ; ALWAYS (assuming fixup locations are sane)
 @FixupDone:
@@ -110,7 +113,7 @@ RegisterModule:
     ; Jump tracks to make sure we run from the moved position, now
     jsr JumpTracks
     ; ...and fix the @FixupDone branch above so it skips this next time
-    lda #(FixupReallyDone - @FixupDoneBra+1)
+    lda #(FixupReallyDone - (@FixupDoneBra+1))
     sta @FixupDoneBra
 FixupReallyDone:
     ; Fixups done, if we're running from our own moved position.
@@ -155,10 +158,8 @@ JumpTracks:
     inx
     ; Get our return's high byte
     lda Mon::STACK,x
-    sec
-    sbc #>BaaamModuleStart
     clc
-    adc StartPage
+    adc StartDiff
     sta Mon::STACK,x ; fix it
     rts              ; ...and then rts to it
 
