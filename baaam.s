@@ -176,17 +176,77 @@ BaaamEntry:
     rts
 
 Ampersand:
-    ldx #0
-@lo:
-    lda Message,x
-    beq @done
-    jsr Mon::COUT
-    inx
-    bne @lo
-@done:
+    jsr ASoft::CHRGET ; get the next character after the &
+    cmp #$AF ; is it another ampersand? (token byte, NOT char)
+    beq @ours ; yes -> ball's in our court
+    ; XXX not another ampersand, consume and check registry
+@ours:
+    jsr GetHandle
+    ; XXX jsr FindInRegistry
     rts
-Message:
-    scrcode "BANZAI!", $0D
+
+; Scan TXTPTR and either treat a bareword as if it were a string,
+; fixing it up appropriately, or else evaluate the actual string and
+; use that.
+GetHandle:
+    jsr ASoft::CHRGOT
+    jsr IsLetter
+    bcc @handleExpr ; -> not a letter, assume it's a literal or formula
+                    ; (and let BASIC handle the err if it's not)
+    ; It was a letter. Scan through and see if it's a legal
+    ; "bareword" string.
+    ldy #1
+@scan:
+    lda (ZP::TXTPTR),y
+    jsr IsBarewordChar
+    bcc @nonBwFnd
+    iny
+    bne @scan
+@nonBwFnd:
+    cmp #':'
+    beq @yesBarewd
+    cmp #','
+    beq @yesBarewd
+    cmp #0
+    beq @yesBarewd
+@handleExpr:
+    jsr ASoft::FRMEVL ; evaluate the string expr
+    jsr ASoft::FREFAC ; free the string tmp
+    sta StrRemain
+    rts
+@yesBarewd:
+    sty StrRemain
+    lda ZP::TXTPTR
+    sta ZP::INDEX
+    sta ZP::TXTPTR+1
+    sta ZP::INDEX+1
+    rts
+
+StrRemain:
     .byte $0
+
+IsBarewordChar:
+    ; XXX
+    rts
+
+; Exits with carry set if A contains a letter. Leaves A, X, Y alone.
+IsLetter:
+    pha
+        and #$5F    ; strip high bit, and convert lowercase to upper
+                    ; (will also convert digits and many punct to
+                    ; control chars, but that doesn't affect our
+                    ; letter-only tests)
+        cmp #'A'
+        bcc @rts    ; lower than 'A'; not a letter. -> exit failure
+        cmp #('Z'+1)
+        bcs @clc    ; higher than 'Z'; not a letter. -> exit failure
+        ; Congrats, we're a letter
+        sec
+        bcs @rts
+@clc:
+        clc
+@rts:
+    pla
+    rts
 
 BaaamEnd:
