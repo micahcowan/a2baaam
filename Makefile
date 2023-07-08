@@ -22,7 +22,7 @@ TMPPRODOS=BAAAM-PRODOS-TMP.po
 BAAAM-PRODOS.po: prodos_242.po $(BAAAM) baaam.tok2
 	cp prodos_242.po $(TMPPRODOS)
 	prodos $(TMPPRODOS) SAVE -t BIN -a 0x1FFD $(BAAAM) BAAAM.BIN
-	prodos $(TMPPRODOS) SAVE -t BAS baaam.tok2 BAAAM
+	prodos $(TMPPRODOS) SAVE -t BAS baaam.tok2 STARTUP
 	mv $(TMPPRODOS) $@
 
 %.tok2: %.tok

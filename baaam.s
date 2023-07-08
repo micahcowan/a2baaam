@@ -9,6 +9,7 @@
 
 StartPage = $6
 StartDiff = $7
+TmpRemain = $8
 
 .segment "START"
 PreBaaam:
@@ -22,6 +23,19 @@ BaaamHeader:
 AmpersandTag:
     .byte 1
     scrcode "&"
+.macro cmd_ str, addr
+    .byte .strlen(str)
+    .byte str
+    .word addr
+.endmacro
+Commands:
+    cmd_ "FAKE", $0
+    cmd_ "REG", RegisterModule-1
+    cmd_ "ANOTHERFAKE", $0
+    .byte $0
+NoCmdMsg:
+    scrcode $0D, "BAAAM: UNRECOGNIZED & & COMMAND"
+    .byte $0
 
 Eot:
     .byte $0 ; current end of modules table
@@ -62,9 +76,8 @@ RegisterModule:
     ; And the end-of-copy
     clc
     adc BaaamModuleSize
+    sbc #0 ; minus 1 (last byte is on prev page)
     sta ZP::A2H
-    ; minus 1 (last byte is on prev page)
-    dec ZP::A2H
     lda #$FF
     sta ZP::A2L
     ldy #0 ; set page starts, but also y must = 0 for Monitor commands.
@@ -171,24 +184,84 @@ BaaamInit:
     sta ASoft::AMP
     stx ASoft::AMP+1
     sty ASoft::AMP+2
+    ; Also, scorch the earth, so a call to &&REG without having loaded a
+    ; new module doesn't result in Weird Things
+    lda #>BaaamModuleStart
+    sta ZP::A1H
+    sta ZP::A4H
+    clc
+    adc #>(BaaamEnd - Baaam)
+    sta ZP::A2H
+    ;;
+    lda #$FE
+    sta ZP::A2L
+    ldy #1
+    sty ZP::A4L
+    dey
+    sty BaaamModuleStart ; seed the ZERO to copy across the rest of the range
+    sty ZP::A1L
+    jsr Mon::MOVE
     ; fall through
 BaaamEntry:
     rts
 
 Ampersand:
-    jsr ASoft::CHRGET ; get the next character after the &
+    jsr ASoft::CHRGOT ; get the next character after the &
     cmp #$AF ; is it another ampersand? (token byte, NOT char)
-    beq @ours ; yes -> ball's in our court
+    beq HandleOurCommand ; yes -> ball's in our court
     ; XXX not another ampersand, consume and check registry
-@ours:
-    jsr GetHandle
-    ; XXX jsr FindInRegistry
+    jsr GetBarewordOrStr
+    ; jsr FindInRegistry
+HandleOurCommand:
+    jsr ASoft::CHRGET ; get the next character after the second &
+    jsr GetBarewordOrStr
+    ldx #0
+@cmdLp:
+    lda Commands,x ; strlength
+    bne @skipErr
+    jmp NoCommand
+@skipErr:
+    inx
+    sta TmpRemain
+    cmp StrRemain  ; same string length?
+    bne @skipCmd   ; no -> try next command
+    ldy #0
+@cmpLp:
+    lda Commands,x
+    cmp (ZP::INDEX),y
+    bne @skipCmd
+    dec TmpRemain
+    beq @cmdFound ; -> strings matched!
+    inx
+    iny
+    bne @cmpLp ; always
+@skipCmd:
+    ; not a match, skip to next cmd
+    txa
+    clc
+    adc TmpRemain ; jump Xreg by remaining chars
+    adc #2        ; and then skip its handler routine address
+    tax
+    bne @cmdLp ; always
+@cmdFound:
+    inx
+    ; load/invoke command handler
+    lda Commands+1,x
+    pha
+    lda Commands,x
+    pha
     rts
+
+NoCommand:
+    lda #<NoCmdMsg
+    ldy #>NoCmdMsg
+    jsr ASoft::STROUT
+    jmp ASoft::SYNERR
 
 ; Scan TXTPTR and either treat a bareword as if it were a string,
 ; fixing it up appropriately, or else evaluate the actual string and
 ; use that.
-GetHandle:
+GetBarewordOrStr:
     jsr ASoft::CHRGOT
     jsr IsLetter
     bcc @handleExpr ; -> not a letter, assume it's a literal or formula
@@ -218,15 +291,35 @@ GetHandle:
     sty StrRemain
     lda ZP::TXTPTR
     sta ZP::INDEX
-    sta ZP::TXTPTR+1
+    lda ZP::TXTPTR+1
     sta ZP::INDEX+1
+    ; But also skip TXTPTR forward, now
+    tya
+    clc
+    adc ZP::TXTPTR
+    sta ZP::TXTPTR
+    bcc @skipHi
+    inc ZP::TXTPTR+1
+@skipHi:
     rts
 
 StrRemain:
     .byte $0
 
 IsBarewordChar:
-    ; XXX
+    jsr IsLetter
+    bcs @rts
+    cmp #'_'
+    beq @rts
+    cmp #('9' + 1)
+    bcs @clc
+    cmp #'0'
+    bcs @rts
+    cmp #'-'
+    beq @rts
+@clc:
+    clc
+@rts:
     rts
 
 ; Exits with carry set if A contains a letter. Leaves A, X, Y alone.
