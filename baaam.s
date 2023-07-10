@@ -1,5 +1,5 @@
 .import BaaamFixup
-.import SystemClear, SystemAlloc
+.import SystemClear, SystemAlloc, SystemDosCmd, SystemErrOut
 
 .macpack apple2
 
@@ -26,16 +26,20 @@ BaaamHeader:
 EmptyTags:
     .byte 0
 Commands:
-    _BaaamHandler "FAKE", Baaam, Baaam+1
-    _BaaamHandler "REZ", Baaam, Baaam+1
-    _BaaamHandler "REG", Baaam, RegisterModule
-    _BaaamHandler "ANOTHERFAKE", Baaam, Baaam+1
+    _BaaamHandler "MODULE", Baaam, RegisterModuleFile
+    _BaaamHandler "REG",    Baaam, RegisterModule
     .byte $0
 NoCmdMsg:
     scrcode $0D, "BAAAM: UNRECOGNIZED & & COMMAND"
     .byte $0
 NoModMsg:
     scrcode $0D, "BAAAM: NO SUCH & HANDLER"
+    .byte $0
+BloadPrefix:
+    scrcode "BLOAD "
+    .byte $0
+BloadSuffix:
+    scrcode ",A$2000", $0D
     .byte $0
 
 Eot:
@@ -214,6 +218,74 @@ BaaamInit:
 BaaamEntry:
     rts
 
+RegisterModuleFile:
+    ; First off, make sure BASIC isn't reading from BUF
+    lda ZP::TXTPTR+1
+    cmp #>Mon::BUF
+    bne @ok
+    ; Throw ILLEGAL DIRECT MODE: we can't do a BLOAD
+    ;  from the same buffer we're running in
+    ldx #ASoft::ERR_ILLDIR
+    jmp ASoft::ERROR
+@ok:
+    jsr ASoft::CHRGOT
+    cmp #','
+    bne @noAdv
+    jsr ASoft::CHRGET ; skip comma
+@noAdv:
+    jsr ASoft::FRMEVL
+    jsr ASoft::FRESTR
+    sta StrRemain
+    ; Copy "BLOAD " into BUF
+    ldy #0
+    ldx #0
+@BufScanner = TmpPtrA
+    stx @BufScanner
+    lda #>Mon::BUF
+    sta @BufScanner+1
+@pfxLp:
+    lda BloadPrefix,x
+    beq @copyUserStr ; -> loop done
+    sta (@BufScanner),y
+    inx
+    jsr AdvanceBuf
+    bne @pfxLp ; always
+@copyUserStr:
+    ldx StrRemain
+@userLp:
+    lda (ZP::INDEX),y
+    ora #$80 ; make it a proper Apple ][ character (BASIC strings use ASCII)
+    sta (@BufScanner),y
+    jsr AdvanceBuf
+    inc ZP::INDEX
+    bne :+
+    inc ZP::INDEX+1
+:
+    dex
+    bne @userLp ; repeat until out of characters
+@copyBloadSuffix:
+    ldx #0
+@sfxLp:
+    lda BloadSuffix,x
+    beq @runCmd ; -> loop done
+    sta (@BufScanner),y
+    inx
+    jsr AdvanceBuf
+    bne @sfxLp ; always
+@runCmd:
+    jsr SystemDosCmd
+    bcc @noErr
+    jsr SystemErrOut
+@noErr:
+    jmp RegisterModule
+AdvanceBuf:
+    inc TmpPtrA
+    beq @oom
+    rts
+@oom:
+    ; We ran out of room in BUF, that's a memory error.
+    jmp ASoft::MEMERR
+
 Ampersand:
     ;jsr ASoft::CHRGOT ; get the next character after the &
     cmp #$AF ; is it another ampersand? (token byte, NOT char)
@@ -384,7 +456,7 @@ GetBarewordOrStr:
     beq @yesBarewd
 @handleExpr:
     jsr ASoft::FRMEVL ; evaluate the string expr
-    jsr ASoft::FREFAC ; free the string tmp
+    jsr ASoft::FRESTR ; free the string tmp
     sta StrRemain
     rts
 @yesBarewd:
