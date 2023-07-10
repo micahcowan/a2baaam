@@ -8,9 +8,9 @@ VERSION_MAJOR=1
 VERSION_MINOR=0
 VERSION_PATCHLEVEL=0
 
-BAAAM_=BAAAM\#061FFD
-BAAAM=prodos-build/$(BAAAM_)
-OBJECTS=baaam.o empty-fixup.o prodos.o
+BAAAM=prodos-build/BAAAM.BIN
+HELLO=prodos-build/HELLO.BIN
+OBJECTS=baaam.o fixup-fake.o prodos.o
 
 .PHONY: all
 all: BAAAM-PRODOS.po
@@ -19,9 +19,10 @@ ifdef BUILDCOPY
 endif
 
 TMPPRODOS=BAAAM-PRODOS-TMP.po
-BAAAM-PRODOS.po: prodos_242.po $(BAAAM) baaam.tok2
+BAAAM-PRODOS.po: prodos_242.po $(BAAAM) $(HELLO) baaam.tok2
 	cp prodos_242.po $(TMPPRODOS)
 	prodos $(TMPPRODOS) SAVE -t BIN -a 0x1FFD $(BAAAM) BAAAM.BIN
+	prodos $(TMPPRODOS) SAVE -t BIN -a 0x2000 $(HELLO) HELLO.BIN
 	prodos $(TMPPRODOS) SAVE -t BAS baaam.tok2 STARTUP
 	mv $(TMPPRODOS) $@
 
@@ -31,16 +32,28 @@ BAAAM-PRODOS.po: prodos_242.po $(BAAAM) baaam.tok2
 %.tok: %.bas
 	tokenize_asoft < $< > $@ || { rm $@; exit 1; }
 
-$(BAAAM): baaam.o fixup.o prodos.o Makefile prodos-build
-	$(LD65) -C baaam.cfg -o $@ baaam.o fixup.o prodos.o
+$(HELLO): hello.o HELLO-fixup.o Makefile prodos-build
+	$(LD65) -C module.cfg -o $@ hello.o HELLO-fixup.o
+$(BAAAM): baaam.o BAAAM-fixup.o prodos.o Makefile prodos-build
+	$(LD65) -C baaam.cfg -o $@ baaam.o BAAAM-fixup.o prodos.o
 
 prodos-build:
 	mkdir -p $@
 
-BAAAM.2000 BAAAM.3000: baaam.o empty-fixup.o prodos.o Makefile
-	$(LD65) -C baaam.cfg -D 'STARTADDR=$$$(subst BAAAM.,,$@)' -o $@ baaam.o empty-fixup.o prodos.o
+HELLO.2000 HELLO.3000: hello.o fixup-fake.o baaam.inc Makefile module.cfg
+	$(LD65) -C module.cfg -D 'STARTADDR=$$$(subst HELLO.,,$@)' -o $@ hello.o fixup-fake.o || { rm -f $@; exit 1; }
 
-fixup.s: Makefile BAAAM.2000 BAAAM.3000 mkfixup
+BAAAM.2000 BAAAM.3000: baaam.o fixup-fake.o prodos.o baaam.inc Makefile baaam.cfg
+	$(LD65) -C baaam.cfg -D 'STARTADDR=$$$(subst BAAAM.,,$@)' -o $@ baaam.o fixup-fake.o prodos.o || { rm -f $@; exit 1; }
+
+BAAAM-skip := -s 3
+
+mkfixup: mkfixup.c
+	gcc $(CFLAGS) -o $@ $<
+
+%-fixup.s: NAME=$(subst -fixup.s,,$@)
+
+%-fixup.s: %.2000 %.3000 mkfixup Makefile
 	: Generate $@; \
 	set -e -u -C; \
 	exec >| $@.tmp; \
@@ -53,10 +66,13 @@ fixup.s: Makefile BAAAM.2000 BAAAM.3000 mkfixup
 	echo; \
 	echo '.segment "FIXUP"'; \
 	echo; \
-	echo '.export BaaamFixup'; \
+	AME=$${NAME#?}; \
+	ame=$$(echo "$$AME" | tr '[:upper:]' '[:lower:]'); \
+	N=$${NAME%%"$$AME"}; Name=$${N}$${ame}; \
+	echo ".export $${Name}Fixup"; \
 	echo; \
-	echo 'BaaamFixup:'; \
-	./mkfixup -s 3 BAAAM.2000 BAAAM.3000; \
+	echo "$${Name}Fixup:"; \
+	./mkfixup $($(NAME)-skip) $(NAME).2000 $(NAME).3000; \
 	: So far so good, move it into place; \
 	mv $@.tmp $@
 
@@ -85,6 +101,6 @@ baaam-version.inc: Makefile
 .PHONY: clean
 clean:
 	rm -fr prodos-build
-	rm -f *.o *.lst baaam-version.inc baaam-version.inc.tmp \
-	    BAAAM\#* BAAAM.2000 BAAAM.3000 mkfixup fixup.s \
+	rm -f *.o *.lst *.tok2 baaam-version.inc baaam-version.inc.tmp \
+	    BAAAM\#* BAAAM.2000 BAAAM.3000 mkfixup *-fixup.s \
 	    BAAAM-PRODOS.po

@@ -9,32 +9,33 @@
 
 StartPage = $6
 StartDiff = $7
-TmpRemain = $8
+TmpPtrA   = $8
+TmpPtrB   = $19
+TmpPtrC   = $1B
+
 
 .segment "START"
 PreBaaam:
     jmp BaaamRun
 Baaam:
 BaaamHeader:
-    _BaaamHeader AmpersandTag, Baaam, BaaamEnd, BaaamFixup, BaaamInit, BaaamEntry
+    _BaaamHeader EmptyTags, Baaam, BaaamEnd, BaaamFixup, BaaamInit
     .include "baaam-version.inc"
 
 .code
-AmpersandTag:
-    .byte 1
-    scrcode "&"
-.macro cmd_ str, addr
-    .byte .strlen(str)
-    .byte str
-    .word addr
-.endmacro
+EmptyTags:
+    .byte 0
 Commands:
-    cmd_ "FAKE", $0
-    cmd_ "REG", RegisterModule-1
-    cmd_ "ANOTHERFAKE", $0
+    _BaaamHandler "FAKE", Baaam, Baaam+1
+    _BaaamHandler "REZ", Baaam, Baaam+1
+    _BaaamHandler "REG", Baaam, RegisterModule
+    _BaaamHandler "ANOTHERFAKE", Baaam, Baaam+1
     .byte $0
 NoCmdMsg:
     scrcode $0D, "BAAAM: UNRECOGNIZED & & COMMAND"
+    .byte $0
+NoModMsg:
+    scrcode $0D, "BAAAM: NO SUCH & HANDLER"
     .byte $0
 
 Eot:
@@ -128,6 +129,7 @@ RegisterModule:
     ; ...and fix the @FixupDone branch above so it skips this next time
     lda #(FixupReallyDone - (@FixupDoneBra+1))
     sta @FixupDoneBra
+    bne DoModuleInit ; (always) -> skip registering "ourself" as a module.
 FixupReallyDone:
     ; Fixups done, if we're running from our own moved position.
     ; Register this module's start page
@@ -139,15 +141,22 @@ FixupReallyDone:
     sta ModulesTable,x ; save module start page
     inx
     stx Eot
+DoModuleInit:
     ; Finally, invoke the module's (fixed-up) init rtn
-@EntryPtr = ZP::A1
+@InitPtr = ZP::A1
     lda BaaamModuleInit
-    sta @EntryPtr
+    sta @InitPtr
+    bne @ok
     lda BaaamModuleInit+1
+    bne @cont
+    rts ; init routine is offset 0 / NUL; don't invoke
+@ok:
+    lda BaaamModuleInit+1
+@cont:
     clc
     adc StartPage
-    sta @EntryPtr+1
-    jmp (@EntryPtr)
+    sta @InitPtr+1
+    jmp (@InitPtr)
 FixupInc:
     inc ZP::A1L
     bne @skip
@@ -206,55 +215,146 @@ BaaamEntry:
     rts
 
 Ampersand:
-    jsr ASoft::CHRGOT ; get the next character after the &
+    ;jsr ASoft::CHRGOT ; get the next character after the &
     cmp #$AF ; is it another ampersand? (token byte, NOT char)
     beq HandleOurCommand ; yes -> ball's in our court
-    ; XXX not another ampersand, consume and check registry
+    ; Not another ampersand, consume and check registry
     jsr GetBarewordOrStr
-    ; jsr FindInRegistry
+    jsr FindAndCallModule
+    bcc @rts
+    jmp NoModule
+@rts:
+    rts
 HandleOurCommand:
     jsr ASoft::CHRGET ; get the next character after the second &
     jsr GetBarewordOrStr
-    ldx #0
-@cmdLp:
-    lda Commands,x ; strlength
-    bne @skipErr
+    lda #<Commands
+    sta TmpPtrA
+    lda #>Commands
+    sta TmpPtrA+1
+    lda #>Baaam
+    sta StartPage
+    jsr FindAndCallHandler
+    bcc @rts ; -> succeeded and handled
     jmp NoCommand
-@skipErr:
-    inx
-    sta TmpRemain
-    cmp StrRemain  ; same string length?
-    bne @skipCmd   ; no -> try next command
+@rts:
+    rts
+
+FindAndCallModule:
+@HandlerTblLocPtr = TmpPtrC
+@HandlerTblLoc    = TmpPtrA
+    ldx #0
+    lda #BaaamOffsetHandleTable
+    sta @HandlerTblLocPtr
+@lpModules:
+    lda ModulesTable,x
+    beq @fail
+    ; Search the handlers for this module
+    sta StartPage
+    sta @HandlerTblLocPtr+1
     ldy #0
-@cmpLp:
-    lda Commands,x
-    cmp (ZP::INDEX),y
-    bne @skipCmd
-    dec TmpRemain
-    beq @cmdFound ; -> strings matched!
-    inx
+    lda (@HandlerTblLocPtr),y
+    sta @HandlerTblLoc
     iny
+    lda (@HandlerTblLocPtr),y
+    clc
+    adc StartPage
+    sta @HandlerTblLoc+1
+    txa
+    pha
+        jsr FindAndCallHandler
+    pla
+    bcc @rts ; found handler!
+    tax
+    inx
+    bcs @lpModules ; we failed to find in this module; try next
+@fail:
+    sec
+@rts:
+    rts
+
+; String to search for expected in ZP::INDEX, with length
+;   in StrRemain
+; HandlersTable expected in TmpPtrA
+FindAndCallHandler:
+@SearchScan = TmpPtrB
+@SearchStr = ZP::INDEX
+@HandlerTbl = TmpPtrA
+    ldy #0
+@cmdLp:
+    lda (@HandlerTbl),y ; strlength
+    bne @skipFail
+    sec
+    rts
+@skipFail:
+    jsr AdvanceA
+    tax
+    cpx StrRemain  ; same string length?
+    bne @skipHandler   ; no -> try next command
+    ; copy string ptr in INDEX to TmpPtrB
+    lda @SearchStr
+    sta @SearchScan
+    lda @SearchStr+1
+    sta @SearchScan+1
+@cmpLp:
+    lda (@HandlerTbl),y
+    cmp (@SearchScan),y
+    bne @skipHandler
+    dex
+    beq @handlerFound ; -> strings matched!
+    jsr AdvanceA
+    jsr AdvanceB
     bne @cmpLp ; always
-@skipCmd:
+@skipHandler:
     ; not a match, skip to next cmd
+    inx
+    inx             ; skip the handler routine size...
     txa
     clc
-    adc TmpRemain ; jump Xreg by remaining chars
-    adc #2        ; and then skip its handler routine address
-    tax
+    adc @HandlerTbl ; ... and jump forward in table past the rest of the string
+    sta @HandlerTbl
+    bcc @noInc
+    inc @HandlerTbl+1
+@noInc:
     bne @cmdLp ; always
-@cmdFound:
-    inx
+@handlerFound:
+    iny
     ; load/invoke command handler
-    lda Commands+1,x
-    pha
-    lda Commands,x
-    pha
+    lda (@HandlerTbl),y
+    sta TmpPtrB         ; we were using this to scan search string, but
+    iny
+    lda (@HandlerTbl),y ;  don't need for that anymore
+    clc
+    adc StartPage
+    sta TmpPtrB+1
+    jsr ASoft::CHRGOT
+    jsr CallB
+    clc ; indicate success
     rts
+AdvanceA:
+    inc TmpPtrA
+    bne @skip
+    inc TmpPtrA+1
+@skip:
+    rts
+AdvanceB:
+    inc TmpPtrB
+    bne @skip
+    inc TmpPtrB+1
+@skip:
+    rts
+CallB:
+    jmp (TmpPtrB)
 
 NoCommand:
     lda #<NoCmdMsg
     ldy #>NoCmdMsg
+    jsr ASoft::STROUT
+    jmp ASoft::SYNERR
+
+NoModule:
+    lda #<NoModMsg
+    ldy #>NoModMsg
     jsr ASoft::STROUT
     jmp ASoft::SYNERR
 
